@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flipbook Studio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#1e1f26; --panel:#2a2c36; --ink:#eceef4; --accent:#6c8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink);
+         display:flex; flex-direction:column; align-items:center; gap:12px; padding:16px; }
+  h1 { margin:0; font-size:20px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--panel);
+         padding:8px 12px; border-radius:10px; }
+  button { background:#3a3d4c; color:var(--ink); border:0; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:14px; }
+  button:hover { background:#4a4e62; }
+  button.on { background:var(--accent); }
+  label { font-size:13px; display:flex; align-items:center; gap:6px; }
+  input[type=color] { width:34px; height:28px; border:0; background:none; padding:0; }
+  canvas { background:#fff; border-radius:8px; touch-action:none; cursor:crosshair; max-width:100%; }
+  #frames { display:flex; gap:8px; overflow-x:auto; max-width:820px; padding:4px; }
+  .thumb { border:3px solid transparent; border-radius:6px; cursor:pointer; background:#fff; flex:none; }
+  .thumb.sel { border-color:var(--accent); }
+  small { opacity:.6 }
+</style>
+</head>
+<body>
+<h1>Flipbook Studio</h1>
+
+<div class="bar">
+  <button id="pen" class="on">Pen</button>
+  <button id="eraser">Eraser</button>
+  <label>Color <input type="color" id="color" value="#222222"></label>
+  <label>Size <input type="range" id="size" min="1" max="40" value="6"></label>
+  <button id="undo">Undo</button>
+  <button id="clear">Clear frame</button>
+</div>
+
+<canvas id="c" width="800" height="500"></canvas>
+
+<div class="bar">
+  <button id="prev">◀</button>
+  <button id="next">▶</button>
+  <button id="add">+ New frame</button>
+  <button id="dup">Duplicate</button>
+  <button id="del">Delete</button>
+  <label><input type="checkbox" id="onion" checked> Onion skin</label>
+  <label>FPS <input type="range" id="fps" min="1" max="24" value="8"> <span id="fpsv">8</span></label>
+  <button id="play">▶ Play</button>
+</div>
+
+<div id="frames"></div>
+<small>Draw on a frame, add a new one, draw the next pose, then press Play.</small>
+
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+const W = cv.width, H = cv.height;
+
+// Each frame: { canvas, undo: [ImageData...] }
+const makeFrame = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return { canvas:c, undo:[] }; };
+let frames = [makeFrame()], cur = 0, tool = 'pen', playing = false, timer = null, drawing = false, last = null;
+
+function render() {
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  if ($('onion').checked && !playing && cur > 0) {
+    ctx.globalAlpha = 0.25; ctx.drawImage(frames[cur-1].canvas, 0, 0); ctx.globalAlpha = 1;
+  }
+  ctx.drawImage(frames[cur].canvas, 0, 0);
+  renderThumbs();
+}
+
+function renderThumbs() {
+  const box = $('frames'); box.innerHTML = '';
+  frames.forEach((f, i) => {
+    const t = document.createElement('canvas'); t.width = 120; t.height = 75;
+    t.className = 'thumb' + (i === cur ? ' sel' : '');
+    const g = t.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0,0,120,75); g.drawImage(f.canvas, 0, 0, 120, 75);
+    t.onclick = () => { if (!playing) { cur = i; render(); } };
+    box.appendChild(t);
+  });
+}
+
+function pos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX - r.left) * W / r.width, y:(e.clientY - r.top) * H / r.height };
+}
+
+cv.addEventListener('pointerdown', e => {
+  if (playing) return;
+  const f = frames[cur], g = f.canvas.getContext('2d');
+  f.undo.push(g.getImageData(0, 0, W, H)); if (f.undo.length > 30) f.undo.shift();
+  drawing = true; last = pos(e); cv.setPointerCapture(e.pointerId);
+  stroke(last, last);
+});
+cv.addEventListener('pointermove', e => { if (drawing) { const p = pos(e); stroke(last, p); last = p; } });
+['pointerup','pointercancel'].forEach(ev => cv.addEventListener(ev, () => { drawing = false; }));
+
+function stroke(a, b) {
+  const g = frames[cur].canvas.getContext('2d');
+  g.lineCap = g.lineJoin = 'round'; g.lineWidth = +$('size').value;
+  g.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+  g.strokeStyle = $('color').value;
+  g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x + 0.01, b.y); g.stroke();
+  render();
+}
+
+function setTool(t) { tool = t; $('pen').classList.toggle('on', t === 'pen'); $('eraser').classList.toggle('on', t === 'eraser'); }
+$('pen').onclick = () => setTool('pen');
+$('eraser').onclick = () => setTool('eraser');
+$('undo').onclick = () => { const f = frames[cur]; if (f.undo.length) { f.canvas.getContext('2d').putImageData(f.undo.pop(), 0, 0); render(); } };
+$('clear').onclick = () => { const f = frames[cur], g = f.canvas.getContext('2d'); f.undo.push(g.getImageData(0,0,W,H)); g.clearRect(0,0,W,H); render(); };
+
+$('add').onclick = () => { frames.splice(cur+1, 0, makeFrame()); cur++; render(); };
+$('dup').onclick = () => { const n = makeFrame(); n.canvas.getContext('2d').drawImage(frames[cur].canvas, 0, 0); frames.splice(cur+1, 0, n); cur++; render(); };
+$('del').onclick = () => { if (frames.length > 1) { frames.splice(cur, 1); cur = Math.min(cur, frames.length-1); render(); } };
+$('prev').onclick = () => { if (!playing) { cur = (cur - 1 + frames.length) % frames.length; render(); } };
+$('next').onclick = () => { if (!playing) { cur = (cur + 1) % frames.length; render(); } };
+$('onion').onchange = render;
+$('fps').oninput = () => { $('fpsv').textContent = $('fps').value; if (playing) { stop(); start(); } };
+
+function start() {
+  playing = true; $('play').textContent = '■ Stop'; $('play').classList.add('on');
+  timer = setInterval(() => { cur = (cur + 1) % frames.length; render(); }, 1000 / $('fps').value);
+}
+function stop() { playing = false; clearInterval(timer); $('play').textContent = '▶ Play'; $('play').classList.remove('on'); render(); }
+$('play').onclick = () => playing ? stop() : start();
+
+window.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'z') $('undo').click();
+  if (e.key === 'ArrowLeft') $('prev').click();
+  if (e.key === 'ArrowRight') $('next').click();
+  if (e.key === ' ' ) { e.preventDefault(); $('play').click(); }
+});
+
+render();
+</script>
+</body>
+</html>
